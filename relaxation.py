@@ -159,57 +159,6 @@ class Star(OrderedRelaxation):
         return entities
 
 
-class MacroUnderestimation(OrderedRelaxation):
-    def __init__(self):
-        super().__init__()
-        self.name = "MacroUnderestimation"
-
-    def callback(self, dm, vertex):
-        s = list(self.star(dm, vertex))
-        closures = sum((list(self.closure(dm, e)) for e in s), [])
-        entities = sum((list(self.star(dm, e)) for e in closures), [])
-        return entities
-
-
-class MacroOverestimation(OrderedRelaxation):
-    def __init__(self):
-        super().__init__()
-        self.name = "MacroOverestimation"
-
-    def callback(self, dm, vertex):
-        s = list(self.star(dm, vertex))
-        closures = sum((list(self.closure(dm, e)) for e in s), [])
-        morestars = sum((list(self.star(dm, e)) for e in closures), [])
-        entities = sum((list(self.closure(dm, e)) for e in morestars), [])
-        return entities
-
-
-class MacroInTheMiddle(OrderedRelaxation):
-    def __init__(self):
-        super().__init__()
-        self.name = "MacroInTheMiddle"
-
-    def callback(self, dm, vertex):
-        s = list(self.star(dm, vertex))
-        closures = sum((list(self.closure(dm, e)) for e in s), [])
-        morestars = sum((list(self.star(dm, e)) for e in closures), [])
-        entities = sum((list(self.cone(dm, e)) for e in morestars), [])
-        return entities
-
-
-class MacroInTheMiddleTwo(OrderedRelaxation):
-    def __init__(self):
-        super().__init__()
-        self.name = "MacroInTheMiddleTwo"
-
-    def callback(self, dm, vertex):
-        s = list(self.star(dm, vertex))
-        closures = sum((list(self.cone(dm, e)) for e in s), [])
-        morestars = sum((list(self.support(dm, e)) for e in closures), [])
-        entities = sum((list(self.cone(dm, e)) for e in morestars), [])
-        return entities
-
-
 class MacroStar(OrderedRelaxation):
     def __init__(self):
         super().__init__()

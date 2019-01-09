@@ -3,13 +3,23 @@ from bary import BaryMeshHierarchy
 from transfer import SchoeberlProlongation, NullTransfer
 
 from functools import reduce
+import argparse
+
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument("--nref", type=int, default=1)
+parser.add_argument("--k", type=int, default=4)
+parser.add_argument("--solver-type", type=str, default="almg")
+parser.add_argument("--gamma", type=float, default=1e4)
+parser.add_argument("--dr", type=float, default=1e8)
+args, _ = parser.parse_known_args()
+
+
+nref = args.nref
+dr = args.dr
+k = args.k
+gamma = Constant(args.gamma)
 
 mesh = RectangleMesh(20, 20, 4, 4)
-tdim = 2
-
-nref = 1
-gamma = Constant(1e4)
-
 def before(dm, i):
     for p in range(*dm.getHeightStratum(1)):
         dm.setLabelValue("prolongation", p, i+1)
@@ -18,26 +28,23 @@ def after(dm, i):
     for p in range(*dm.getHeightStratum(1)):
         dm.setLabelValue("prolongation", p, i+2)
 
-mh = BaryMeshHierarchy(mesh, nref, callbacks=(before, after), reorder=True, distribution_parameters={"partition": True, "overlap_type": (DistributedMeshOverlapType.VERTEX, 2)})
-
+mh = BaryMeshHierarchy(mesh, nref, callbacks=(before, after), reorder=True,
+                       distribution_parameters={"partition": True,
+                                                "overlap_type": (DistributedMeshOverlapType.VERTEX, 2)})
 mesh = mh[-1]
 
 
-k=4
 V = VectorFunctionSpace(mesh, "CG", k)
 Q = FunctionSpace(mesh, "DG", k-1)
 Z = V * Q
-
-bcs = [DirichletBC(Z.sub(0), 0, "on_boundary")]
-
 z = Function(Z)
 u, p = split(z)
 v, q = TestFunctions(Z)
+bcs = [DirichletBC(Z.sub(0), 0, "on_boundary")]
 
 
 omega = 0.1
 delta = 200
-dr = 1e8
 mu_min = dr**-0.5
 mu_max = dr**0.5
 
@@ -48,10 +55,7 @@ def chi_n(mesh):
     def indi(ci):
         return 1-exp(-delta * Max(0, sqrt(inner(ci-X, ci-X))-omega/2)**2)
 
-    if tdim == 2:
-        indis = [indi(Constant((4*(cx+1)/2, 4*(cy+1)/2))) for cx in range(1) for cy in range(1)]
-    else:
-        indis = [indi(Constant(((cx+1)/3, (cy+1)/3, (cz+1)/3))) for cx in range(2) for cy in range(2) for cz in range(2)]
+    indis = [indi(Constant((4*(cx+1)/3, 4*(cy+1)/3))) for cx in range(2) for cy in range(2)]
 
     return reduce(lambda x, y : x*y, indis, Constant(1.0))
 
@@ -62,18 +66,18 @@ def mu(mesh):
     Q = FunctionSpace(mesh, "DG", k-1)
     return Function(Q).interpolate(mu_expr(mesh))
 
-nus = [mu(m) for m in mh]
-nu = nus[-1]
+mus = [mu(m) for m in mh]
+mu = mus[-1]
 
 F = (
     mu_expr(mesh) * inner(grad(u), grad(v))*dx
     + gamma * inner(div(u), div(v))*dx
     - p * div(v) * dx
     - div(u) * q * dx
-    - 10 * (chi_n(mesh)-1)*v[tdim-1] * dx
+    - 10 * (chi_n(mesh)-1)*v[1] * dx
 )
 
-appctx = {"nu": nu, "gamma": gamma}
+appctx = {"nu": mu, "gamma": gamma}
 
 fieldsplit_1 = {
     "ksp_type": "preonly",
@@ -105,7 +109,6 @@ mg_levels_solver = {
     "patch_pc_patch_partition_of_unity": False,
     "patch_pc_patch_sub_mat_type": "aij",
     "patch_pc_patch_local_type": "multiplicative",
-    # "patch_pc_patch_local_type": "additive",
     "patch_pc_patch_statistics": False,
     "patch_pc_patch_symmetrise_sweep": True,
     "patch_sub_ksp_type": "preonly",
@@ -136,7 +139,6 @@ outer = {
     "ksp_type": "fgmres",
     "ksp_rtol": 1.0e-6,
     "ksp_atol": 1.0e-10,
-    # "ksp_max_it": 500,
     "ksp_max_it": 100,
     "ksp_monitor_true_residual": None,
     "ksp_converged_reason": None,
@@ -144,11 +146,16 @@ outer = {
     "pc_fieldsplit_type": "schur",
     "pc_fieldsplit_schur_factorization_type": "full",
     "pc_fieldsplit_schur_precondition": "user",
-    # "fieldsplit_0": fieldsplit_0_lu,
-    "fieldsplit_0": fieldsplit_0_mg,
-    # "fieldsplit_0": fieldsplit_0_hypre,
     "fieldsplit_1": fieldsplit_1,
 }
+if args.solver_type == "almg":
+    outer["fieldsplit_0"] = fieldsplit_0_mg
+elif args.solver_type == "allu":
+    outer["fieldsplit_0"] = fieldsplit_0_lu
+elif args.solver_type == "alamg":
+    outer["fieldsplit_0"] = fieldsplit_0_hypre
+else:
+    raise ValueError("please specify almg, allu or alamg for --solver-type")
 params = outer
 
 MVSB = MixedVectorSpaceBasis
@@ -157,14 +164,13 @@ problem = NonlinearVariationalProblem(F, z, bcs=bcs)
 solver = NonlinearVariationalSolver(problem, solver_parameters=params, options_prefix="ns_",
                                     appctx=appctx, nullspace=nsp)
 
-prolongation = SchoeberlProlongation(nus, gamma, tdim)
+prolongation = SchoeberlProlongation(mus, gamma, 2)
 injection = NullTransfer()
 solver.set_transfer_operators(dmhooks.transfer_operators(V, prolong=prolongation.prolong),
                               dmhooks.transfer_operators(Q, inject=injection.inject))
-# solver.set_transfer_operators(dmhooks.transfer_operators(V, prolong=prolongation.prolong))
 
 solver.solve()
 
 File("u.pvd").write(z.split()[0])
 File("p.pvd").write(z.split()[1])
-File("nu.pvd").write(nu)
+File("nu.pvd").write(mu)

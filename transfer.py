@@ -126,8 +126,6 @@ class SchoeberlProlongation(object):
 
         firsttime = self.bcs.get(key, None) is None
 
-        # prev_gamma = self.prev_gamma.get(key, None)
-
         gamma = self.gamma
 
         _, level = get_level(fine.function_space().mesh())
@@ -155,14 +153,6 @@ class SchoeberlProlongation(object):
             A, b, bform = self.tensors[key]
             tildeu, rhs = self.rhs[key]
 
-        # # Update operator if parameters have changed.
-        # if float(self.Re) != prev_Re or float(self.gamma) != prev_gamma:
-        #     A = solver.A
-        #     A = assemble(A.a, bcs=bcs, mat_type=self.patchparams["mat_type"], tensor=A)
-        #     A.force_evaluation()
-        #     self.prev_Re[key] = float(self.Re)
-        #     self.prev_gamma[key] = float(self.gamma)
-
         prolong(coarse, rhs)
 
         b = assemble(bform, bcs=bcs, tensor=b)
@@ -175,19 +165,6 @@ class SchoeberlProlongation(object):
                 with tildeu.dat.vec_wo as x:
                     solver.ksp.pc.apply(rhsv, x)
         fine.assign(rhs - tildeu)
-
-        # def energy_norm(u):
-        #     return assemble(nu * inner(grad(u), grad(u)) * dx + gamma * inner(div(u), div(u)) * dx)
-        # def H1_norm(u):
-        #     return assemble(nu * inner(grad(u), grad(u)) * dx)
-
-        # warning("\|coarse\| %.10f " % energy_norm(coarse))
-        # warning("\|coarse\|_1 %f " % H1_norm(coarse))
-        # warning("\|fine\| %.10f" % energy_norm(fine))
-        # warning("\|fine\|_1 %f" % H1_norm(fine))
-        # warning("\|tildeu\| %.10f" % energy_norm(tildeu))
-        # warning("\|rhs\| %.10f" % energy_norm(rhs))
-        # import sys; sys.exit(1)
 
 
 class NullTransfer(object):
