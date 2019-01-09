@@ -45,8 +45,8 @@ bcs = [DirichletBC(Z.sub(0), 0, "on_boundary")]
 
 omega = 0.1
 delta = 200
-mu_min = dr**-0.5
-mu_max = dr**0.5
+mu_min = Constant(dr**-0.5)
+mu_max = Constant(dr**0.5)
 
 def Max(a, b): return (a+b+abs(a-b))/Constant(2)
 
@@ -94,7 +94,6 @@ fieldsplit_0_lu = {
 
 fieldsplit_0_hypre = {
     "ksp_type": "richardson",
-    "ksp_monitor": None,
     "ksp_max_it": 2,
     "pc_type": "hypre",
 }
