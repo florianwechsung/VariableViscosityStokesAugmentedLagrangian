@@ -12,6 +12,7 @@ class DGMassInv(PCBase):
         nu = appctx["nu"]
         gamma = appctx["gamma"]
         massinv = assemble(Tensor(inner(u, v)*dx).inv)
+        # massinv = assemble(Tensor((-(nu+gamma))*inner(u, v)*dx).inv)
         massinv.force_evaluation()
         self.massinv = massinv.petscmat
         self.nuplusgammainv = nu.copy(deepcopy=True)
