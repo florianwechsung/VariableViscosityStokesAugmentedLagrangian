@@ -17,18 +17,27 @@ _Velocity_
 Install firedrake via 
 
     curl -O https://raw.githubusercontent.com/firedrakeproject/firedrake/master/scripts/firedrake-install
-    python3 firedrake-install
+    export PETSC_CONFIGURE_OPTIONS="--download-superlu --download-superlu_dist --with-cxx-dialect=C++11"
+    VENVNAME=firedrake-vvstokes
+    mkdir -p $VENVNAME/src
+    python3 firedrake-install \
+        --venv-name $VENVNAME \
+        --mpicc mpicc.mpich \
+        --mpicxx mpicxx.mpich \
+        --mpif90 mpif90.mpich \
+        --mpiexec mpiexec.mpich \
+        --package-branch petsc fix/pip-install
+
 
 and then run 
 
-    mpirun -n 4 python3 stokes.py --k 4 --nref 1 --gamma 1e4 --dr 1e6 --solver-type almg
+    mpiexec -n 4 python3 stokes.py --k 4 --nref 1 --gamma 1e4 --dr 1e6 --solver-type almg --element sv
 
 The options are
 
-+ `--k` order of velocity approximation. We use a `CG(k)-DG(k-1)` Scott-Vogelius element. We need k>=2.
 + `--nref` number of multigrid refinements
 + `--gamma` value of gamma for augmentation
 + `--dr` orders of magnitude between high and low viscosity
 + `--solver-type`: use `allu` to solve top-left using LU, `alamg` to solve top-left block using hypre, and `almg` to solve top-left using custom geometric multigrid scheme.
-
-
++ `--element`: either `sv` for Scott-Vogelius, i.e. CG(k)-DG(k-1) (need `k>=2` in that case) or `p2p0` for CG(2)-DG(0) (need `k=0` then).
++ `--k` order of velocity approximation.
