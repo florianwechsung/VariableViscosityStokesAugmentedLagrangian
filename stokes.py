@@ -11,15 +11,23 @@ parser.add_argument("--k", type=int, default=4)
 parser.add_argument("--solver-type", type=str, default="almg")
 parser.add_argument("--gamma", type=float, default=1e4)
 parser.add_argument("--dr", type=float, default=1e8)
+parser.add_argument("--element", type=str, default="p2p0", choices=["p2p0", "sv"])
 args, _ = parser.parse_known_args()
-
 
 nref = args.nref
 dr = args.dr
 k = args.k
 gamma = Constant(args.gamma)
 
-mesh = RectangleMesh(20, 20, 4, 4)
+if args.element == "p2p0" and k != 2:
+    warning("Changing velocity degree to k=2 and proceeding.")
+    k = 2
+if args.element == "sv" and k < 1:
+    raise RuntimeError("Scott-Vogelius is only inf-sup stable for k>=d.")
+
+overlap = 2 if args.element == "sv" else 1
+distp = {"partition": True, "overlap_type": (DistributedMeshOverlapType.VERTEX, overlap)}
+mesh = RectangleMesh(20, 20, 4, 4, distribution_parameters=distp)
 def before(dm, i):
     for p in range(*dm.getHeightStratum(1)):
         dm.setLabelValue("prolongation", p, i+1)
@@ -28,14 +36,20 @@ def after(dm, i):
     for p in range(*dm.getHeightStratum(1)):
         dm.setLabelValue("prolongation", p, i+2)
 
-mh = BaryMeshHierarchy(mesh, nref, callbacks=(before, after), reorder=True,
-                       distribution_parameters={"partition": True,
-                                                "overlap_type": (DistributedMeshOverlapType.VERTEX, 2)})
+if args.element == "sv":
+    mh = BaryMeshHierarchy(mesh, nref, callbacks=(before, after), reorder=True,
+                           distribution_parameters=distp)
+else:
+    mh = MeshHierarchy(mesh, nref, callbacks=(before, after), reorder=True,
+                       distribution_parameters=distp)
 mesh = mh[-1]
 
-
-V = VectorFunctionSpace(mesh, "CG", k)
-Q = FunctionSpace(mesh, "DG", k-1)
+if args.element == "sv":
+    V = VectorFunctionSpace(mesh, "CG", k)
+    Q = FunctionSpace(mesh, "DG", k-1)
+else:
+    V = VectorFunctionSpace(mesh, "CG", 2)
+    Q = FunctionSpace(mesh, "DG", 0)
 Z = V * Q
 z = Function(Z)
 u, p = split(z)
@@ -63,19 +77,21 @@ def mu_expr(mesh):
     return (mu_max-mu_min)*(1-chi_n(mesh)) + mu_min
 
 def mu(mesh):
-    Q = FunctionSpace(mesh, "DG", k-1)
-    return Function(Q).interpolate(mu_expr(mesh))
+    Qm = FunctionSpace(mesh, Q.ufl_element())
+    return Function(Qm).interpolate(mu_expr(mesh))
 
 mus = [mu(m) for m in mh]
 mu = mus[-1]
-
 F = (
     mu_expr(mesh) * inner(grad(u), grad(v))*dx
-    + gamma * inner(div(u), div(v))*dx
     - p * div(v) * dx
     - div(u) * q * dx
     - 10 * (chi_n(mesh)-1)*v[1] * dx
 )
+if args.element == "sv":
+    F += gamma * inner(div(u), div(v))*dx
+else:
+    F += gamma * inner(cell_avg(div(u)), div(v))*dx
 
 appctx = {"nu": mu, "gamma": gamma}
 
@@ -106,7 +122,7 @@ mg_levels_solver = {
     "pc_python_type": "firedrake.PatchPC",
     "patch_pc_patch_save_operators": True,
     "patch_pc_patch_partition_of_unity": False,
-    "patch_pc_patch_sub_mat_type": "aij",
+    "patch_pc_patch_sub_mat_type": "aij" if args.element == "sv" else "dense",
     "patch_pc_patch_local_type": "additive",
     "patch_pc_patch_statistics": False,
     "patch_pc_patch_symmetrise_sweep": False,
@@ -114,9 +130,13 @@ mg_levels_solver = {
     "patch_sub_ksp_type": "preonly",
     "patch_sub_pc_type": "lu",
     "patch_sub_pc_factor_mat_solver_type": "petsc",
-    "patch_pc_patch_construct_type": "python",
-    "patch_pc_patch_construct_python_type": "relaxation.MacroStar",
 }
+if args.element == "sv":
+    mg_levels_solver["patch_pc_patch_construct_type"] = "python"
+    mg_levels_solver["patch_pc_patch_construct_python_type"] = "relaxation.MacroStar"
+else:
+    mg_levels_solver["patch_pc_patch_construct_type"] = "star"
+
 
 fieldsplit_0_mg = {
     "ksp_type": "richardson",
@@ -130,7 +150,7 @@ fieldsplit_0_mg = {
     "mg_coarse_pc_type": "python",
     "mg_coarse_pc_python_type": "firedrake.AssembledPC",
     "mg_coarse_assembled_pc_type": "lu",
-    "mg_coarse_assembled_pc_factor_mat_solver_type": "mumps",
+    "mg_coarse_assembled_pc_factor_mat_solver_type": "superlu_dist",
 }
 
 outer = {
@@ -140,7 +160,7 @@ outer = {
     "ksp_rtol": 1.0e-6,
     "ksp_atol": 1.0e-10,
     "ksp_max_it": 100,
-    "ksp_monitor_true_residual": None,
+    # "ksp_monitor_true_residual": None,
     "ksp_converged_reason": None,
     "pc_type": "fieldsplit",
     "pc_fieldsplit_type": "schur",
@@ -164,12 +184,17 @@ problem = NonlinearVariationalProblem(F, z, bcs=bcs)
 solver = NonlinearVariationalSolver(problem, solver_parameters=params, options_prefix="ns_",
                                     appctx=appctx, nullspace=nsp)
 
-prolongation = SchoeberlProlongation(mus, gamma, 2)
+prolongation = SchoeberlProlongation(mus, gamma, 2, args.element)
 injection = NullTransfer()
 solver.set_transfer_operators(dmhooks.transfer_operators(V, prolong=prolongation.prolong),
                               dmhooks.transfer_operators(Q, inject=injection.inject))
 
+import time
+start = time.time()
 solver.solve()
+end = time.time()
+warning("DOF count. Velocity: %e, Pressure %e, Total %e" %(V.dim(), Q.dim(), Z.dim()))
+warning("Time: %f" % (end-start))
 
 File("u.pvd").write(z.split()[0])
 File("p.pvd").write(z.split()[1])

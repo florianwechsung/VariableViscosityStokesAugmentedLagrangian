@@ -49,14 +49,48 @@ class CoarseCellMacroPatches(object):
         return (patches, piterset)
 
 
+class CoarseCellPatches(object):
+    def __call__(self, pc):
+        from firedrake.mg.utils import get_level
+        from firedrake.mg.impl import get_entity_renumbering
+
+        dmf = pc.getDM()
+        ctx = pc.getAttr("ctx")
+
+        mf = ctx._x.ufl_domain()
+        (mh, level) = get_level(mf)
+
+        coarse_to_fine_cell_map = mh.coarse_to_fine_cells[level-1]
+        (_, firedrake_to_plex) = get_entity_renumbering(dmf, mf._cell_numbering, "cell")
+
+        patches = []
+        for fine_firedrake in coarse_to_fine_cell_map:
+            # we need to convert firedrake cell numbering to plex cell numbering
+            fine_plex = [firedrake_to_plex[ff] for ff in fine_firedrake]
+            entities = []
+            for fp in fine_plex:
+                (pts, _) = dmf.getTransitiveClosure(fp, True)
+                for pt in pts:
+                    value = dmf.getLabelValue("prolongation", pt)
+                    if not (value > -1 and value <= level):
+                        entities.append(pt)
+
+            iset = PETSc.IS().createGeneral(unique(entities), comm=PETSc.COMM_SELF)
+            patches.append(iset)
+
+        piterset = PETSc.IS().createStride(size=len(patches), first=0, step=1, comm=PETSc.COMM_SELF)
+        return (patches, piterset)
+
+
 class SchoeberlProlongation(object):
-    def __init__(self, nus, gamma, tdim):
+    def __init__(self, nus, gamma, tdim, element):
         self.solver = {}
         self.bcs = {}
         self.rhs = {}
         self.tensors = {}
         self.nus = nus
         self.gamma = gamma
+        self.element = element
 
         patchparams = {"snes_type": "ksponly",
                        "ksp_type": "richardson",
@@ -69,9 +103,13 @@ class SchoeberlProlongation(object):
                        "patch_pc_patch_multiplicative": False,
                        "patch_pc_patch_sub_mat_type": "seqaij" if tdim > 2 else "seqdense",
                        "patch_pc_patch_construct_type": "python",
-                       "patch_pc_patch_construct_python_type": "transfer.CoarseCellMacroPatches",
                        "patch_sub_ksp_type": "preonly",
                        "patch_sub_pc_type": "lu"}
+        if element == "sv":
+            patchparams["patch_pc_patch_construct_python_type"] = "transfer.CoarseCellMacroPatches"
+        else:
+            patchparams["patch_pc_patch_construct_python_type"] = "transfer.CoarseCellPatches"
+
         self.patchparams = patchparams
 
     def break_ref_cycles(self):
@@ -134,11 +172,15 @@ class SchoeberlProlongation(object):
             bcs = self.fix_coarse_boundaries(V)
             u = TrialFunction(V)
             v = TestFunction(V)
-            A = assemble(nu * inner(grad(u), grad(v))*dx + gamma*inner(div(u), div(v))*dx, bcs=bcs, mat_type=self.patchparams["mat_type"])
-
             tildeu, rhs = Function(V), Function(V)
+            if self.element == "sv":
+                A = assemble(nu * inner(grad(u), grad(v))*dx + gamma*inner(div(u), div(v))*dx, bcs=bcs, mat_type=self.patchparams["mat_type"])
+                bform = nu * inner(grad(rhs), grad(v))*dx + gamma*inner(div(rhs), div(v))*dx
+            else:
+                A = assemble(nu * inner(grad(u), grad(v))*dx + gamma*inner(cell_avg(div(u)), div(v))*dx, bcs=bcs, mat_type=self.patchparams["mat_type"])
+                bform = nu * inner(grad(rhs), grad(v))*dx + gamma*inner(cell_avg(div(rhs)), div(v))*dx
 
-            bform = nu * inner(grad(rhs), grad(v))*dx + gamma*inner(div(rhs), div(v))*dx
+
             b = Function(V)
 
             solver = LinearSolver(A, solver_parameters=self.patchparams,
