@@ -19,7 +19,6 @@ Install firedrake via
     curl -O https://raw.githubusercontent.com/firedrakeproject/firedrake/master/scripts/firedrake-install
     export PETSC_CONFIGURE_OPTIONS="--download-superlu --download-superlu_dist --with-cxx-dialect=C++11"
     VENVNAME=firedrake-vvstokes
-    mkdir -p $VENVNAME/src
     python3 firedrake-install \
         --venv-name $VENVNAME \
         --mpicc mpicc.mpich \
