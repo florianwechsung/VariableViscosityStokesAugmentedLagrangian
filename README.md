@@ -38,5 +38,5 @@ The options are
 + `--gamma` value of gamma for augmentation
 + `--dr` orders of magnitude between high and low viscosity
 + `--solver-type`: use `allu` to solve top-left using LU, `alamg` to solve top-left block using hypre, and `almg` to solve top-left using custom geometric multigrid scheme.
-+ `--element`: either `sv` for Scott-Vogelius, i.e. CG(k)-DG(k-1) (need `k>=2` in that case) or `p2p0` for CG(2)-DG(0) (need `k=0` then).
++ `--element`: either `sv` for Scott-Vogelius, i.e. CG(k)-DG(k-1) (need `k>=2` in that case) or `p2p0` for CG(2)-DG(0) (need `k=2` then).
 + `--k` order of velocity approximation.
