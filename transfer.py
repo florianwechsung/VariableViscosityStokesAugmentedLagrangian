@@ -15,7 +15,7 @@ class CoarseCellMacroPatches(object):
         dmf = pc.getDM()
         ctx = pc.getAttr("ctx")
 
-        mf = ctx.a.ufl_domain()
+        mf = ctx._x.ufl_domain()
         (mh, level) = get_level(mf)
 
         coarse_to_fine_cell_map = mh.coarse_to_fine_cells[level-1]
